@@ -6,7 +6,6 @@
 
 typedef struct
 {
-    ngx_uint_t                                    point;
     struct sockaddr                              *sockaddr;
     socklen_t                                     socklen;
     ngx_str_t                                     name;
@@ -16,10 +15,12 @@ typedef struct
 {
     ngx_http_memcache_node                       *buckets;
     ngx_int_t                                     num_buckets;
-} ngx_http_memcache_node_hash_buckets;
+    ngx_array_t                                  *key_vars_lengths;
+    ngx_array_t                                  *key_vars_values;
+} ngx_http_memcache_node_hash_upstream_context;
 
 typedef struct {
-    ngx_http_memcache_node_hash_buckets          *peers;
+    ngx_http_memcache_node_hash_upstream_context          *upstream_context;
 
     u_char                                        tries;
     ngx_uint_t                                    point;
@@ -83,18 +84,20 @@ ngx_http_php_memcache_standard_balancer_hash_key(ngx_conf_t *cf, ngx_command_t *
     ngx_http_upstream_srv_conf_t *uscf;
     ngx_http_script_compile_t sc;
     ngx_str_t *value;
+    ngx_http_memcache_node_hash_upstream_context     *upstream_context;
     
     value = cf->args->elts;
     
     ngx_memzero(&sc, sizeof(ngx_http_script_compile_t));
     
-    ngx_http_php_memcache_hash_key_vars_lengths = NULL;
-    ngx_http_php_memcache_hash_key_vars_values = NULL;
+    upstream_context = ngx_pcalloc(cf->pool, sizeof(ngx_http_memcache_node_hash_upstream_context));
+    upstream_context->key_vars_lengths = NULL;
+    upstream_context->key_vars_values = NULL;
     
     sc.cf = cf;
     sc.source = &value[1];
-    sc.lengths = &ngx_http_php_memcache_hash_key_vars_lengths;
-    sc.values = &ngx_http_php_memcache_hash_key_vars_values;
+    sc.lengths = &upstream_context->key_vars_lengths;
+    sc.values = &upstream_context->key_vars_values;
     sc.complete_lengths = 1;
     sc.complete_values = 1;
     
@@ -105,6 +108,7 @@ ngx_http_php_memcache_standard_balancer_hash_key(ngx_conf_t *cf, ngx_command_t *
     uscf = ngx_http_conf_get_module_srv_conf(cf, ngx_http_upstream_module);
     
     uscf->peer.init_upstream = ngx_http_php_memcache_standard_balancer_init;
+    uscf->peer.data = upstream_context;
     
     uscf->flags = NGX_HTTP_UPSTREAM_CREATE | NGX_HTTP_UPSTREAM_WEIGHT;
     
@@ -114,7 +118,7 @@ ngx_http_php_memcache_standard_balancer_hash_key(ngx_conf_t *cf, ngx_command_t *
 ngx_int_t
 ngx_http_php_memcache_standard_balancer_init(ngx_conf_t *cf, ngx_http_upstream_srv_conf_t *us)
 {
-    ngx_http_memcache_node_hash_buckets     *bucket_holder;
+    ngx_http_memcache_node_hash_upstream_context     *upstream_context;
     ngx_http_upstream_server_t              *server;
     ngx_uint_t                               i, j;
     
@@ -124,23 +128,23 @@ ngx_http_php_memcache_standard_balancer_init(ngx_conf_t *cf, ngx_http_upstream_s
         j += server[i].weight;
     }
     
-    bucket_holder = ngx_pcalloc(cf->pool, sizeof(ngx_http_memcache_node_hash_buckets));
-    bucket_holder->buckets = ngx_pcalloc(cf->pool, sizeof(ngx_http_memcache_node) * j);
+    upstream_context = us->peer.data;
+
+    upstream_context->buckets = ngx_pcalloc(cf->pool, sizeof(ngx_http_memcache_node) * j);
     
-    bucket_holder->num_buckets = 0;
+    upstream_context->num_buckets = 0;
     
     for (i = 0; i < us->servers->nelts; i++) {
         for (j = 0; j < server[i].weight; j++) {
-            bucket_holder->buckets[i].sockaddr = server[i].addrs[0].sockaddr;
-            bucket_holder->buckets[i].socklen = server[i].addrs[0].socklen;
-            bucket_holder->buckets[i].name.data = ngx_pcalloc(cf->pool, sizeof(u_char) * server[i].addrs[0].name.len + 1);
-            ngx_cpystrn(bucket_holder->buckets[i].name.data, server[i].addrs[0].name.data, server[i].addrs[0].name.len + 1);
-            bucket_holder->buckets[i].name.len = server[i].addrs[0].name.len;
-            bucket_holder->num_buckets++;
+            upstream_context->buckets[i].sockaddr = server[i].addrs[0].sockaddr;
+            upstream_context->buckets[i].socklen = server[i].addrs[0].socklen;
+            upstream_context->buckets[i].name.data = ngx_pcalloc(cf->pool, sizeof(u_char) * server[i].addrs[0].name.len + 1);
+            ngx_cpystrn(upstream_context->buckets[i].name.data, server[i].addrs[0].name.data, server[i].addrs[0].name.len + 1);
+            upstream_context->buckets[i].name.len = server[i].addrs[0].name.len;
+            upstream_context->num_buckets++;
         }
     }
     
-    us->peer.data = bucket_holder;
     us->peer.init = ngx_http_php_memcache_standard_balancer_init_peer;
     
     return NGX_OK;
@@ -156,10 +160,10 @@ ngx_http_php_memcache_standard_balancer_init_peer(ngx_http_request_t *r, ngx_htt
     if (pmsbd == NULL) {
         return NGX_ERROR;
     }
-    pmsbd->peers = us->peer.data;
+    pmsbd->upstream_context = us->peer.data;
     r->upstream->peer.data = us->peer.data;
     
-    if (ngx_http_script_run(r, &evaluated_key_to_hash, ngx_http_php_memcache_hash_key_vars_lengths->elts, 0, ngx_http_php_memcache_hash_key_vars_values->elts) == NULL) {
+    if (ngx_http_script_run(r, &evaluated_key_to_hash, pmsbd->upstream_context->key_vars_lengths->elts, 0, pmsbd->upstream_context->key_vars_values->elts) == NULL) {
         return NGX_ERROR;
     }
     pmsbd->point = (ngx_crc32_long(evaluated_key_to_hash.data, evaluated_key_to_hash.len) >> 16) & 0x7fff;
@@ -177,11 +181,11 @@ ngx_http_php_memcache_standard_balancer_get_peer(ngx_peer_connection_t *pc, void
 {
     ngx_http_php_memcache_standard_balancer_peer_data_t *pmsbd = data;
     
-    pc->sockaddr = pmsbd->peers->buckets[pmsbd->point % pmsbd->peers->num_buckets].sockaddr;
-    pc->socklen = pmsbd->peers->buckets[pmsbd->point % pmsbd->peers->num_buckets].socklen;
-    pc->name = &pmsbd->peers->buckets[pmsbd->point % pmsbd->peers->num_buckets].name;
+    pc->sockaddr = pmsbd->upstream_context->buckets[pmsbd->point % pmsbd->upstream_context->num_buckets].sockaddr;
+    pc->socklen = pmsbd->upstream_context->buckets[pmsbd->point % pmsbd->upstream_context->num_buckets].socklen;
+    pc->name = &pmsbd->upstream_context->buckets[pmsbd->point % pmsbd->upstream_context->num_buckets].name;
     
-    printf("the winner is bucket number %u with the name %s\n", (unsigned int)(pmsbd->point % pmsbd->peers->num_buckets), pc->name->data);
+    printf("the winner is bucket number %u with the name %s\n", (unsigned int)(pmsbd->point % pmsbd->upstream_context->num_buckets), pc->name->data);
     return NGX_OK;
 }
 
