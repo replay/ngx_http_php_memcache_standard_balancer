@@ -34,9 +34,6 @@ static ngx_int_t ngx_http_php_memcache_standard_balancer_init_peer(ngx_http_requ
 static ngx_int_t ngx_http_php_memcache_standard_balancer_get_peer(ngx_peer_connection_t *pc, void *data);
 void ngx_http_php_memcache_standard_balancer_free_peer(ngx_peer_connection_t *pc, void *data, ngx_uint_t state);
 
-static ngx_array_t * ngx_http_php_memcache_hash_key_vars_lengths;
-static ngx_array_t * ngx_http_php_memcache_hash_key_vars_values;
-
 static ngx_command_t  ngx_http_php_memcache_standard_balancer_commands[] = { 
 
     { ngx_string("hash_key"),
