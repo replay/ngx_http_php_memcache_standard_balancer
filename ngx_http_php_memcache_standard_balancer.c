@@ -165,7 +165,7 @@ ngx_http_php_memcache_standard_balancer_init_peer(ngx_http_request_t *r, ngx_htt
     }
     pmsbd->point = (ngx_crc32_long(evaluated_key_to_hash.data, evaluated_key_to_hash.len) >> 16) & 0x7fff;
     
-    printf("the key is %s and it got %u points\n", evaluated_key_to_hash.data, (unsigned int)pmsbd->point);
+    ngx_log_error(NGX_LOG_INFO, r->connection->log, 0, "the key is %V and it got %ui points\n", &evaluated_key_to_hash, (unsigned int)pmsbd->point);
     r->upstream->peer.free = ngx_http_php_memcache_standard_balancer_free_peer;
     r->upstream->peer.get = ngx_http_php_memcache_standard_balancer_get_peer;
     r->upstream->peer.data = pmsbd;
@@ -182,7 +182,7 @@ ngx_http_php_memcache_standard_balancer_get_peer(ngx_peer_connection_t *pc, void
     pc->socklen = pmsbd->upstream_context->buckets[pmsbd->point % pmsbd->upstream_context->num_buckets].socklen;
     pc->name = &pmsbd->upstream_context->buckets[pmsbd->point % pmsbd->upstream_context->num_buckets].name;
     
-    printf("the winner is bucket number %u with the name %s\n", (unsigned int)(pmsbd->point % pmsbd->upstream_context->num_buckets), pc->name->data);
+    ngx_log_error(NGX_LOG_INFO, pc->log, 0, "the winner is bucket number %ui with the name %V\n", (unsigned int)(pmsbd->point % pmsbd->upstream_context->num_buckets), pc->name);
     return NGX_OK;
 }
 
